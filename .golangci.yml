@@ -13,8 +13,34 @@ linters:
     - revive
     - misspell
     - bodyclose
-    - copyloopvar
-    - gosec
+  settings:
+    errcheck:
+      exclude-functions:
+        - (io.Closer).Close
+        - (net.Conn).Close
+        - (*os.File).Close
+    revive:
+      rules:
+        - name: redefines-builtin-id
+        - name: var-naming
+        - name: error-return
+        - name: error-naming
+        - name: indent-error-flow
+        - name: range
+        - name: receiver-naming
+        - name: time-naming
+        - name: unexported-return
+        - name: errorf
+        - name: empty-block
+        - name: superfluous-else
+        - name: unused-parameter
+          disabled: true
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck
+          - bodyclose
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0

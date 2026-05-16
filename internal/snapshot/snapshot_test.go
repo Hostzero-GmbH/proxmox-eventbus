@@ -47,7 +47,7 @@ func TestEmitOnce(t *testing.T) {
 	deadline := time.After(2 * time.Second)
 	gotQEMU, gotLXC, gotComplete := false, false, false
 	var snapID string
-	for !(gotQEMU && gotLXC && gotComplete) {
+	for !gotQEMU || !gotLXC || !gotComplete {
 		select {
 		case ev := <-out:
 			switch {

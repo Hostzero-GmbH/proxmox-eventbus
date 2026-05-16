@@ -17,6 +17,6 @@ func notifyReady() {
 	if err != nil {
 		return
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	_, _ = c.Write([]byte("READY=1\nSTATUS=running\n"))
 }

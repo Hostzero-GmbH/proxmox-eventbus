@@ -88,7 +88,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("inotify: %w", err)
 	}
-	defer fw.Close()
+	defer func() { _ = fw.Close() }()
 
 	if err := fw.Add(w.tasksDir); err != nil {
 		return fmt.Errorf("watch %s: %w", w.tasksDir, err)

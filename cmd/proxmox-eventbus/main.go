@@ -59,7 +59,9 @@ Usage:
 
 func runDaemon() error {
 	cfgPath := flag.String("config", config.DefaultPath, "path to config file")
-	flag.CommandLine.Parse(os.Args[1:])
+	if err := flag.CommandLine.Parse(os.Args[1:]); err != nil {
+		return err
+	}
 
 	cfg, err := config.Load(*cfgPath)
 	if err != nil {

@@ -31,9 +31,9 @@ func (e *Emitter) Run(ctx context.Context) error {
 	}
 	jitter := time.Duration(0)
 	if e.JitterPC > 0 {
-		max := int64(e.Interval) * int64(e.JitterPC) / 100
-		if max > 0 {
-			jitter = time.Duration(rand.Int64N(max))
+		jitterMax := int64(e.Interval) * int64(e.JitterPC) / 100
+		if jitterMax > 0 {
+			jitter = time.Duration(rand.Int64N(jitterMax))
 		}
 	}
 	first := time.NewTimer(jitter)

@@ -5,14 +5,15 @@ package bus
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
 	"time"
 
 	"github.com/Hostzero-GmbH/proxmox-eventbus/internal/pmxcfs"
-	nats "github.com/nats-io/nats.go"
 	natsserver "github.com/nats-io/nats-server/v2/server"
+	nats "github.com/nats-io/nats.go"
 )
 
 type Options struct {
@@ -42,9 +43,9 @@ type Logger interface {
 }
 
 type Server struct {
-	opts    Options
-	ns      *natsserver.Server
-	encConn *nats.EncodedConn
+	opts Options
+	ns   *natsserver.Server
+	conn *nats.Conn
 
 	natsOpts *natsserver.Options // retained for ReloadOptions on route changes
 
@@ -80,9 +81,7 @@ func (s *Server) Start(ctx context.Context) error {
 		nopts.Cluster.TLSTimeout = 5
 	}
 
-	for _, r := range routesToURLs(s.opts.StaticRoutes) {
-		nopts.Routes = append(nopts.Routes, r)
-	}
+	nopts.Routes = append(nopts.Routes, routesToURLs(s.opts.StaticRoutes)...)
 
 	ns, err := natsserver.NewServer(nopts)
 	if err != nil {
@@ -115,8 +114,8 @@ func (s *Server) Stop() {
 	if s.cancelRouteMgr != nil {
 		s.cancelRouteMgr()
 	}
-	if s.encConn != nil {
-		s.encConn.Close()
+	if s.conn != nil {
+		s.conn.Close()
 	}
 	if s.ns != nil {
 		s.ns.Shutdown()
@@ -127,27 +126,18 @@ func (s *Server) Stop() {
 // in-process connection so latency stays sub-millisecond and we never go
 // through the network.
 func (s *Server) PublishJSON(subject string, v any) error {
-	if s.encConn == nil {
+	if s.conn == nil {
 		return errors.New("bus not started")
 	}
-	return s.encConn.Publish(subject, v)
+	b, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+	return s.conn.Publish(subject, b)
 }
 
-// Subscribe registers a handler for the given subject pattern using the in-process connection.
-func (s *Server) Subscribe(subject string, handler nats.Handler) (*nats.Subscription, error) {
-	if s.encConn == nil {
-		return nil, errors.New("bus not started")
-	}
-	return s.encConn.Subscribe(subject, handler)
-}
-
-// Conn returns the underlying core NATS connection (for advanced usage / tests).
-func (s *Server) Conn() *nats.Conn {
-	if s.encConn == nil {
-		return nil
-	}
-	return s.encConn.Conn
-}
+// Conn returns the underlying core NATS connection for subscriptions and tests.
+func (s *Server) Conn() *nats.Conn { return s.conn }
 
 func (s *Server) connectInProc() error {
 	nc, err := nats.Connect("",
@@ -158,11 +148,7 @@ func (s *Server) connectInProc() error {
 	if err != nil {
 		return fmt.Errorf("in-proc connect: %w", err)
 	}
-	ec, err := nats.NewEncodedConn(nc, nats.JSON_ENCODER)
-	if err != nil {
-		return fmt.Errorf("encoded conn: %w", err)
-	}
-	s.encConn = ec
+	s.conn = nc
 	return nil
 }
 

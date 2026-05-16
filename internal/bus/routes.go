@@ -63,9 +63,7 @@ func (s *Server) applyRoutes(last *string) {
 		}
 		urls = append(urls, u)
 	}
-	for _, r := range routesToURLs(s.opts.StaticRoutes) {
-		urls = append(urls, r)
-	}
+	urls = append(urls, routesToURLs(s.opts.StaticRoutes)...)
 
 	newOpts := *s.natsOpts
 	newOpts.Routes = urls

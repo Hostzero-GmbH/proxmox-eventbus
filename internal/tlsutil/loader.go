@@ -12,16 +12,14 @@ import (
 	"fmt"
 	"os"
 	"sync/atomic"
-	"time"
 )
 
 type Loader struct {
 	caFile, certFile, keyFile string
 	verifyClient              bool
 
-	cur     atomic.Pointer[tls.Config]
-	caCur   atomic.Pointer[x509.CertPool]
-	lastMod time.Time
+	cur   atomic.Pointer[tls.Config]
+	caCur atomic.Pointer[x509.CertPool]
 }
 
 func NewLoader(ca, cert, key string, verifyClient bool) (*Loader, error) {
