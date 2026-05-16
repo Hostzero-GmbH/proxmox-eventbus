@@ -53,10 +53,13 @@ jobs:
         env:
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          mkdir -p packages
+          mkdir -p packages dist/cfg
           for arch in amd64 arm64; do
-            ARCH=$arch VERSION=$VERSION nfpm package \
-              --config packaging/nfpm.yaml \
+            ARCH=$arch VERSION=$VERSION \
+              envsubst '$ARCH $VERSION' \
+                < packaging/nfpm.yaml > "dist/cfg/nfpm-${arch}.yaml"
+            nfpm package \
+              --config "dist/cfg/nfpm-${arch}.yaml" \
               --packager deb \
               --target packages/
           done
