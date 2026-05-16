@@ -1,0 +1,49 @@
+[Unit]
+Description=Proxmox event bus daemon
+Documentation=https://github.com/Hostzero-GmbH/proxmox-eventbus
+After=network-online.target pve-cluster.service
+Wants=pve-cluster.service
+PartOf=pve-cluster.service
+
+[Service]
+Type=notify
+NotifyAccess=main
+User=proxmox-eventbus
+Group=www-data
+ExecStart=/usr/bin/proxmox-eventbus --config /etc/proxmox-eventbus/config.yaml
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=15
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+PrivateTmp=true
+PrivateDevices=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# /proc is needed read-only so the migrate-target argv read works.
+# pmxcfs (/etc/pve) is read-only for us; we only write logs to journald.
+ReadOnlyPaths=/etc/pve /var/log/pve /proc
+
+[Install]
+WantedBy=multi-user.target

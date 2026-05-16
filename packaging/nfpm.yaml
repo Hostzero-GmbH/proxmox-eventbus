@@ -1,0 +1,59 @@
+name: proxmox-eventbus
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+section: admin
+priority: optional
+maintainer: Hostzero GmbH <info@hostzero.com>
+description: |
+  Low-latency Proxmox VE event bus daemon.
+  Watches /var/log/pve/tasks for VM/LXC lifecycle changes, enriches them
+  from pmxcfs, and publishes CloudEvents on an embedded NATS server that
+  auto-clusters with peers using /etc/pve/.members and the cluster mTLS PKI.
+vendor: Hostzero GmbH
+homepage: https://github.com/Hostzero-GmbH/proxmox-eventbus
+license: Apache-2.0
+
+depends:
+  - libc6
+  - adduser
+  - systemd
+
+recommends:
+  - proxmox-ve
+
+contents:
+  - src: ./dist/proxmox-eventbus_${ARCH}
+    dst: /usr/bin/proxmox-eventbus
+    file_info:
+      mode: 0755
+
+  - src: ./packaging/systemd/proxmox-eventbus.service
+    dst: /lib/systemd/system/proxmox-eventbus.service
+    file_info:
+      mode: 0644
+
+  - src: ./packaging/etc/proxmox-eventbus/config.yaml
+    dst: /etc/proxmox-eventbus/config.yaml
+    type: config|noreplace
+    file_info:
+      mode: 0644
+
+  - src: ./LICENSE
+    dst: /usr/share/doc/proxmox-eventbus/LICENSE
+    file_info:
+      mode: 0644
+
+  - src: ./README.md
+    dst: /usr/share/doc/proxmox-eventbus/README.md
+    file_info:
+      mode: 0644
+
+scripts:
+  postinstall: ./packaging/scripts/postinst
+  preremove:   ./packaging/scripts/prerm
+  postremove:  ./packaging/scripts/postrm
+
+deb:
+  fields:
+    Bugs: https://github.com/Hostzero-GmbH/proxmox-eventbus/issues

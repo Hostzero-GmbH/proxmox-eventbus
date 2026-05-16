@@ -1,0 +1,27 @@
+#!/bin/sh
+set -e
+
+USER=proxmox-eventbus
+GROUP=www-data
+CONFIG=/etc/proxmox-eventbus/config.yaml
+
+if ! getent passwd "$USER" >/dev/null; then
+    adduser --system --no-create-home --shell /usr/sbin/nologin --ingroup "$GROUP" "$USER"
+fi
+
+# Make sure the user can read pmxcfs files restricted to root:www-data 0640.
+if ! id -nG "$USER" | grep -qw "$GROUP"; then
+    usermod -aG "$GROUP" "$USER"
+fi
+
+mkdir -p /etc/proxmox-eventbus
+
+if [ "$1" = "configure" ]; then
+    systemctl daemon-reload || true
+    if [ -d /run/systemd/system ]; then
+        systemctl enable proxmox-eventbus.service >/dev/null 2>&1 || true
+        systemctl restart proxmox-eventbus.service || true
+    fi
+fi
+
+exit 0

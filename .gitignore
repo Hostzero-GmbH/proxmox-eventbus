@@ -1,0 +1,14 @@
+/dist/
+/bin/
+*.deb
+*.sig
+*.pem
+*.key
+*.crt
+*.csr
+*.sbom.json
+.coverage/
+*.out
+.idea/
+.vscode/
+.DS_Store

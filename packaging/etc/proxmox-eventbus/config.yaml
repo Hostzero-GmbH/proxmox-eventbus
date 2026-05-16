@@ -1,0 +1,43 @@
+# proxmox-eventbus configuration.
+# Defaults shown explicitly; comment out anything you want auto-detected.
+
+node:
+  # Auto-detected from /etc/pve/.members when empty.
+  cluster_name: ""
+  name: ""
+
+watch:
+  tasks_dir: /var/log/pve/tasks
+  include: [qemu, lxc]
+
+snapshot:
+  enabled: true
+  interval: 30s
+  jitter_percent: 10
+  # Open QMP socket for precise paused/suspended state (one unix-socket RPC per
+  # running VM per tick). Off by default; turn on for ops-heavy clusters.
+  qmp: false
+
+nats:
+  # Empty = use the local node name.
+  server_name: ""
+  client:
+    host: 0.0.0.0
+    port: 4222
+  cluster:
+    host: 0.0.0.0
+    port: 6222
+  tls:
+    # Both listeners reuse the PVE cluster PKI. Cluster CA + per-node cert are
+    # provisioned automatically by `pvecm add`, so no bootstrap is needed.
+    ca_file: /etc/pve/pve-root-ca.pem
+    cert_file: /etc/pve/local/pve-ssl.pem
+    key_file: /etc/pve/local/pve-ssl.key
+    verify_client: true
+  discovery:
+    members_file: /etc/pve/.members
+    static_routes: []
+
+logging:
+  level: info
+  format: journald

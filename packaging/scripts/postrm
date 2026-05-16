@@ -1,0 +1,15 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = "purge" ]; then
+    if getent passwd proxmox-eventbus >/dev/null; then
+        deluser --quiet proxmox-eventbus || true
+    fi
+    rm -rf /etc/proxmox-eventbus
+fi
+
+if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload || true
+fi
+
+exit 0

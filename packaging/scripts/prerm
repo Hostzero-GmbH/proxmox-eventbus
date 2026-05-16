@@ -1,0 +1,9 @@
+#!/bin/sh
+set -e
+
+if [ -d /run/systemd/system ]; then
+    systemctl stop proxmox-eventbus.service || true
+    systemctl disable proxmox-eventbus.service >/dev/null 2>&1 || true
+fi
+
+exit 0
