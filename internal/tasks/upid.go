@@ -77,26 +77,58 @@ func (u UPID) VMID() int {
 
 var errEmpty = errors.New("empty line")
 
-// ParseActiveLine parses a single line from /var/log/pve/tasks/active.
+// ParseActiveLine parses a single line from /var/log/pve/tasks/active or
+// /var/log/pve/tasks/index. PVE writes both as space-separated records.
 //
-// Active format historically is a tab-separated record:
+//	<UPID>                            (legacy active line, no trailer)
+//	<UPID> 0                          (active, not yet saved to index)
+//	<UPID> 1 <endtime_hex> <status>   (active, finished and saved)
+//	<UPID> <endtime_hex> <status>     (index file form)
 //
-//	<UPID>\t<status_or_empty>
-//
-// when a task finishes the status (OK or error) is filled in and the line is rewritten in place.
+// Returns the canonical UPID (with trailing colon, no trailer) and the status
+// string ("" while running, "OK" or an error message after termination).
 func ParseActiveLine(line string) (UPID, string, error) {
 	line = strings.TrimRight(line, "\r\n")
 	if line == "" {
 		return UPID{}, "", errEmpty
 	}
-	parts := strings.SplitN(line, "\t", 3)
-	upid, err := ParseUPID(parts[0])
+	upidStr, rest, _ := strings.Cut(line, " ")
+	upid, err := ParseUPID(upidStr)
 	if err != nil {
 		return UPID{}, "", err
 	}
-	status := ""
-	if len(parts) > 1 {
-		status = strings.TrimSpace(parts[len(parts)-1])
+	return upid, parseStatusTail(rest), nil
+}
+
+func parseStatusTail(rest string) string {
+	rest = strings.TrimSpace(rest)
+	if rest == "" || rest == "0" {
+		return ""
 	}
-	return upid, status, nil
+	fields := strings.Fields(rest)
+	// Active "1 <endtime_hex> <status...>"
+	if fields[0] == "1" && len(fields) >= 3 && isHex(fields[1]) {
+		return strings.Join(fields[2:], " ")
+	}
+	// Index "<endtime_hex> <status...>"
+	if len(fields) >= 2 && isHex(fields[0]) {
+		return strings.Join(fields[1:], " ")
+	}
+	return rest
+}
+
+func isHex(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		switch {
+		case '0' <= c && c <= '9':
+		case 'a' <= c && c <= 'f':
+		case 'A' <= c && c <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
 }
