@@ -30,15 +30,18 @@ type IssueClientCertOpts struct {
 	Orgs       []string
 }
 
-// IssueClientCert mints a short-lived client certificate signed by the PVE
-// cluster CA. Must be run as root since /etc/pve/priv/pve-root-ca.key is root-only.
-//
-// Writes three files into opts.OutDir:
-//
-//	ca.pem      copy of the cluster CA cert
-//	client.pem  the newly issued client certificate
-//	client.key  PKCS#8 EC P-256 key (mode 0600)
-func IssueClientCert(opts IssueClientCertOpts) error {
+// ClientCertBundle is the in-memory result of IssueClientCertPEM: PEM-encoded
+// CA, client cert, and PKCS#8 EC private key, ready to feed into tls.Config.
+type ClientCertBundle struct {
+	CAPEM   []byte
+	CertPEM []byte
+	KeyPEM  []byte
+}
+
+// IssueClientCertPEM mints a short-lived client certificate signed by the PVE
+// cluster CA and returns the PEM blobs without touching the filesystem.
+// Must be run as root since /etc/pve/priv/pve-root-ca.key is root-only.
+func IssueClientCertPEM(opts IssueClientCertOpts) (*ClientCertBundle, error) {
 	if opts.CACertFile == "" {
 		opts.CACertFile = DefaultCAcertPath
 	}
@@ -46,10 +49,7 @@ func IssueClientCert(opts IssueClientCertOpts) error {
 		opts.CAKeyFile = DefaultCAkeyPath
 	}
 	if opts.CN == "" {
-		return errors.New("CN required")
-	}
-	if opts.OutDir == "" {
-		return errors.New("OutDir required")
+		return nil, errors.New("CN required")
 	}
 	if opts.Validity == 0 {
 		opts.Validity = 365 * 24 * time.Hour
@@ -60,21 +60,21 @@ func IssueClientCert(opts IssueClientCertOpts) error {
 
 	caCert, err := loadPEMCert(opts.CACertFile)
 	if err != nil {
-		return fmt.Errorf("load CA cert: %w", err)
+		return nil, fmt.Errorf("load CA cert: %w", err)
 	}
 	caKey, err := loadPEMKey(opts.CAKeyFile)
 	if err != nil {
-		return fmt.Errorf("load CA key: %w", err)
+		return nil, fmt.Errorf("load CA key: %w", err)
 	}
 
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	tmpl := &x509.Certificate{
@@ -91,31 +91,45 @@ func IssueClientCert(opts IssueClientCertOpts) error {
 
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, &priv.PublicKey, caKey)
 	if err != nil {
-		return fmt.Errorf("sign cert: %w", err)
-	}
-	if err := os.MkdirAll(opts.OutDir, 0o755); err != nil {
-		return err
-	}
-
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
-	if err := os.WriteFile(filepath.Join(opts.OutDir, "client.pem"), certPEM, 0o644); err != nil {
-		return err
+		return nil, fmt.Errorf("sign cert: %w", err)
 	}
 
 	keyDER, err := x509.MarshalPKCS8PrivateKey(priv)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
-	if err := os.WriteFile(filepath.Join(opts.OutDir, "client.key"), keyPEM, 0o600); err != nil {
-		return err
+	caPEM, err := os.ReadFile(opts.CACertFile)
+	if err != nil {
+		return nil, fmt.Errorf("read CA cert: %w", err)
 	}
 
-	caPEM, err := os.ReadFile(opts.CACertFile)
+	return &ClientCertBundle{
+		CAPEM:   caPEM,
+		CertPEM: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
+		KeyPEM:  pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}),
+	}, nil
+}
+
+// IssueClientCert mints a short-lived client certificate signed by the PVE
+// cluster CA and writes it to opts.OutDir as ca.pem, client.pem, client.key.
+func IssueClientCert(opts IssueClientCertOpts) error {
+	if opts.OutDir == "" {
+		return errors.New("OutDir required")
+	}
+	bundle, err := IssueClientCertPEM(opts)
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(opts.OutDir, "ca.pem"), caPEM, 0o644); err != nil {
+	if err := os.MkdirAll(opts.OutDir, 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(opts.OutDir, "ca.pem"), bundle.CAPEM, 0o644); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(opts.OutDir, "client.pem"), bundle.CertPEM, 0o644); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(opts.OutDir, "client.key"), bundle.KeyPEM, 0o600); err != nil {
 		return err
 	}
 	return nil

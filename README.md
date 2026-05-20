@@ -47,6 +47,16 @@ systemctl status proxmox-eventbus
 journalctl -u proxmox-eventbus -f
 ```
 
+Live-tail events without setting up consumer credentials:
+
+```
+ssh root@pve01 proxmox-eventbus tail 'pve.>'
+```
+
+This subscribes to the local NATS server using an ephemeral client cert minted
+in-memory from the PVE cluster CA. Add `--json` to get raw CloudEvents one per
+line (pipe through `jq`).
+
 ## Consuming events
 
 External consumers connect to any combination of node URLs. The NATS client

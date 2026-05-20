@@ -19,11 +19,13 @@ import (
 type Options struct {
 	ServerName string
 
-	ClientHost string
-	ClientPort int
+	ClientHost      string
+	ClientPort      int
+	ClientAdvertise string // host:port gossiped to clients; empty disables advertise
 
-	ClusterHost string
-	ClusterPort int
+	ClusterHost      string
+	ClusterPort      int
+	ClusterAdvertise string // host:port gossiped to peers; empty disables advertise
 
 	TLS        *tls.Config // for the client listener
 	ClusterTLS *tls.Config // for the cluster route listener
@@ -58,15 +60,17 @@ func New(o Options) *Server {
 
 func (s *Server) Start(ctx context.Context) error {
 	nopts := &natsserver.Options{
-		ServerName: s.opts.ServerName,
-		Host:       s.opts.ClientHost,
-		Port:       s.opts.ClientPort,
-		NoSigs:     true,
-		HTTPPort:   -1,
+		ServerName:      s.opts.ServerName,
+		Host:            s.opts.ClientHost,
+		Port:            s.opts.ClientPort,
+		ClientAdvertise: s.opts.ClientAdvertise,
+		NoSigs:          true,
+		HTTPPort:        -1,
 		Cluster: natsserver.ClusterOpts{
 			Name:      "proxmox-eventbus",
 			Host:      s.opts.ClusterHost,
 			Port:      s.opts.ClusterPort,
+			Advertise: s.opts.ClusterAdvertise,
 			TLSConfig: s.opts.ClusterTLS,
 		},
 		TLSConfig: s.opts.TLS,

@@ -16,6 +16,39 @@ require mTLS and verify the peer against the cluster CA. There is no separate
 bootstrap step; `pvecm add` on a new node provisions a usable cert and the
 daemon picks it up.
 
+### Hostname/IP check is disabled on cluster routes (by design)
+
+PVE issues `pve-ssl.pem` with a SAN containing the node short name and the
+management-interface IP. In multi-network clusters the daemon is reached over
+a *different* address (e.g. a dedicated cluster/migration network from
+`/etc/pve/.members`), which is **not** in the SAN. Go's default TLS
+verification would reject this even though the cert is perfectly valid.
+
+The cluster listener (`:6222`) therefore:
+
+1. Sets `InsecureSkipVerify = true` to switch off Go's hostname check.
+2. Sets `ClientAuth = RequireAnyClientCert` to switch off Go's default chain
+   check on the server side.
+3. Performs strict chain verification ourselves in `VerifyPeerCertificate`
+   against `/etc/pve/pve-root-ca.pem`.
+
+Trust boundary: **any cert signed by the cluster CA is a valid peer**, regardless
+of which IP it presents. This matches PVE's existing PKI trust model (the CA
+key is root-only inside pmxcfs, so possession of a signed cert already implies
+root on a cluster node).
+
+`nats-server` logs a generic warning when `InsecureSkipVerify=true`; the daemon
+filters it because it's misleading in our setup (chain verification is still
+performed). Our log adapter prints an accurate line at startup instead:
+
+```
+cluster route TLS: chain verified against CA, hostname check disabled
+```
+
+The client listener (`:4222`) keeps full default Go verification on inbound
+client certs, because external consumers don't have the cluster-IP-in-SAN
+problem and the standard mTLS check is appropriate there.
+
 Key reach:
 
 - The daemon runs as `proxmox-eventbus:www-data`. It can read the local

@@ -109,6 +109,28 @@ func (r *Reader) LocalNodeName() (string, error) {
 	return strings.TrimSpace(string(b)), nil
 }
 
+// LocalIP returns the IP of the local node as recorded in /etc/pve/.members.
+// This is the address other cluster nodes use to reach this one over the
+// configured cluster network, and is the right value to advertise to NATS
+// clients and peers.
+func (r *Reader) LocalIP() (string, error) {
+	m, err := r.Members()
+	if err != nil {
+		return "", err
+	}
+	if m.NodeName == "" {
+		return "", errors.New("local node name not set in .members")
+	}
+	n, ok := m.NodeList[m.NodeName]
+	if !ok {
+		return "", fmt.Errorf("node %q not in nodelist", m.NodeName)
+	}
+	if n.IP == "" {
+		return "", fmt.Errorf("node %q has no IP in nodelist", m.NodeName)
+	}
+	return n.IP, nil
+}
+
 // Peers returns all online peer nodes excluding self.
 func (r *Reader) Peers() ([]Node, error) {
 	m, err := r.Members()

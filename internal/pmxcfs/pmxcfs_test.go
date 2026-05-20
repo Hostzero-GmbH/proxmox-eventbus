@@ -39,6 +39,13 @@ func TestReadMembers(t *testing.T) {
 	if peers[0].IP != "10.0.0.2" {
 		t.Errorf("peer IP = %q", peers[0].IP)
 	}
+	ip, err := r.LocalIP()
+	if err != nil {
+		t.Fatalf("LocalIP: %v", err)
+	}
+	if ip != "10.0.0.1" {
+		t.Errorf("LocalIP = %q, want 10.0.0.1", ip)
+	}
 }
 
 func TestReadVMConfig(t *testing.T) {

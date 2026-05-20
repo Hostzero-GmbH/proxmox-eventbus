@@ -33,6 +33,8 @@ func main() {
 		switch os.Args[1] {
 		case "issue-client-cert":
 			os.Exit(runIssueClientCert(os.Args[2:]))
+		case "tail":
+			os.Exit(runTail(os.Args[2:]))
 		case "version", "-v", "--version":
 			fmt.Println(version.String())
 			return
@@ -52,6 +54,7 @@ func printHelp() {
 
 Usage:
   proxmox-eventbus                    run the daemon (reads /etc/proxmox-eventbus/config.yaml)
+  proxmox-eventbus tail <subject>...  subscribe over local NATS and print events
   proxmox-eventbus issue-client-cert  mint a client cert signed by the PVE cluster CA
   proxmox-eventbus version            print version
   proxmox-eventbus help               print this help`)
@@ -102,21 +105,27 @@ func runDaemon() error {
 	if err != nil {
 		return fmt.Errorf("tls: %w", err)
 	}
+	log.Info("cluster route TLS: chain verified against CA, hostname check disabled",
+		"ca", cfg.NATS.TLS.CAFile, "cert", cfg.NATS.TLS.CertFile)
+
+	clientAdv, clusterAdv := resolveAdvertise(cfg, reader, log)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
 	server := bus.New(bus.Options{
-		ServerName:   nonEmpty(cfg.NATS.ServerName, nodeName),
-		ClientHost:   cfg.NATS.Client.Host,
-		ClientPort:   cfg.NATS.Client.Port,
-		ClusterHost:  cfg.NATS.Cluster.Host,
-		ClusterPort:  cfg.NATS.Cluster.Port,
-		TLS:          tlsLoader.Server(),
-		ClusterTLS:   tlsLoader.Server(),
-		StaticRoutes: cfg.NATS.Discovery.StaticRoutes,
-		Reader:       reader,
-		Logger:       slogLoggerAdapter{log: log},
+		ServerName:       nonEmpty(cfg.NATS.ServerName, nodeName),
+		ClientHost:       cfg.NATS.Client.Host,
+		ClientPort:       cfg.NATS.Client.Port,
+		ClientAdvertise:  clientAdv,
+		ClusterHost:      cfg.NATS.Cluster.Host,
+		ClusterPort:      cfg.NATS.Cluster.Port,
+		ClusterAdvertise: clusterAdv,
+		TLS:              tlsLoader.Server(),
+		ClusterTLS:       tlsLoader.Cluster(),
+		StaticRoutes:     cfg.NATS.Discovery.StaticRoutes,
+		Reader:           reader,
+		Logger:           slogLoggerAdapter{log: log},
 	})
 	if err := server.Start(ctx); err != nil {
 		return fmt.Errorf("bus start: %w", err)
@@ -224,6 +233,36 @@ func nonEmpty(a, b string) string {
 		return a
 	}
 	return b
+}
+
+// resolveAdvertise returns effective ClientAdvertise/ClusterAdvertise strings.
+//
+// When the listener Host is a wildcard (0.0.0.0 / ::) and no explicit
+// advertise is configured, nats-server gossips a useless URL and logs
+// `Address "0.0.0.0" can not be resolved properly`. We pull the local node
+// IP from /etc/pve/.members to produce a reachable advertise. Explicit
+// per-listener config wins over auto-derivation.
+func resolveAdvertise(cfg config.Config, reader *pmxcfs.Reader, log *slog.Logger) (clientAdv, clusterAdv string) {
+	clientAdv = cfg.NATS.Client.Advertise
+	clusterAdv = cfg.NATS.Cluster.Advertise
+	if clientAdv != "" && clusterAdv != "" {
+		return
+	}
+	ip, err := reader.LocalIP()
+	if err != nil {
+		log.Warn("advertise auto-detect failed; falling back to listener host",
+			"err", err)
+		return
+	}
+	if clientAdv == "" {
+		clientAdv = fmt.Sprintf("%s:%d", ip, cfg.NATS.Client.Port)
+	}
+	if clusterAdv == "" {
+		clusterAdv = fmt.Sprintf("%s:%d", ip, cfg.NATS.Cluster.Port)
+	}
+	log.Info("nats advertise resolved",
+		"client", clientAdv, "cluster", clusterAdv)
+	return
 }
 
 // slogLoggerAdapter satisfies bus.Logger using slog.

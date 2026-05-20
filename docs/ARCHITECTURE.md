@@ -66,6 +66,21 @@ have helped either. If you need replay or at-least-once delivery for
 auditing, enable JetStream in a future release; it's a server option and
 won't change the wire format.
 
+## Advertise addresses
+
+Both listeners default to `0.0.0.0` so the daemon is reachable from any
+interface. nats-server gossips a "connect URL" to every client and peer
+which they use to discover the rest of the cluster - if it gossips
+`0.0.0.0` external clients can't use it, and the server logs
+`Address "0.0.0.0" can not be resolved properly`.
+
+To avoid that the daemon reads the local node IP from `/etc/pve/.members`
+and sets it as both `ClientAdvertise` and `Cluster.Advertise`. This is the
+same address other PVE cluster members use to reach this node, so it's the
+correct one to gossip. Override per listener via `nats.client.advertise`
+and `nats.cluster.advertise` if you need a different routable address
+(e.g. a public hostname for external consumers).
+
 ## Why poll `.members` instead of inotify
 
 `pmxcfs` rewrites the entire file atomically. The cost of a fresh `os.ReadFile`

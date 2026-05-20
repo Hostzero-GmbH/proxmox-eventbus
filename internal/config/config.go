@@ -53,6 +53,11 @@ type NATSConfig struct {
 type ListenerConfig struct {
 	Host string `yaml:"host"`
 	Port int    `yaml:"port"`
+	// Advertise is the host:port (or bare host) gossiped to peers/clients.
+	// Empty = auto-derive "<local-ip>:<port>" from /etc/pve/.members so that
+	// 0.0.0.0 listeners still gossip a reachable address; falls back to no
+	// advertise if the IP can't be resolved.
+	Advertise string `yaml:"advertise"`
 }
 
 type TLSConfig struct {

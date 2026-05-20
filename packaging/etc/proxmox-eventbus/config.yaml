@@ -24,9 +24,13 @@ nats:
   client:
     host: 0.0.0.0
     port: 4222
+    # host:port advertised to clients. Empty = auto from /etc/pve/.members,
+    # so wildcard listeners still gossip a reachable URL.
+    advertise: ""
   cluster:
     host: 0.0.0.0
     port: 6222
+    advertise: ""
   tls:
     # Both listeners reuse the PVE cluster PKI. Cluster CA + per-node cert are
     # provisioned automatically by `pvecm add`, so no bootstrap is needed.
