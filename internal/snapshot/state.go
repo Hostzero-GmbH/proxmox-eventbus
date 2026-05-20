@@ -51,13 +51,6 @@ func (p Prober) cgroupRoot() string {
 	return p.CgroupV2
 }
 
-func (p Prober) procRoot() string {
-	if p.ProcRoot == "" {
-		return "/proc"
-	}
-	return p.ProcRoot
-}
-
 // QEMUState returns the running state and a diagnostic detail for a QEMU VM.
 // The detail string is empty on the happy paths and only populated when state
 // is StateUnknown to make the failure debuggable from the event payload.
