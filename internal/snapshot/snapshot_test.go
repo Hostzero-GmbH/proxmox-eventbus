@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"testing"
 	"time"
@@ -68,6 +69,67 @@ func TestEmitOnce(t *testing.T) {
 	}
 	if snapID == "" {
 		t.Error("snapshot.complete missing snapshot_id")
+	}
+}
+
+// TestQEMUStateUnreadablePIDFile reproduces the production setup: PVE creates
+// /run/qemu-server/<vmid>.pid as mode 0600 root:root, and our daemon runs as
+// an unprivileged user that can stat the file but not read it. The state must
+// be Running (file existence is authoritative), not Unknown.
+func TestQEMUStateUnreadablePIDFile(t *testing.T) {
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		t.Skip("unix-only: relies on file mode bits")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses mode 0000 - mode bit semantics don't apply here")
+	}
+	run := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(run, "qemu-server"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pidPath := filepath.Join(run, "qemu-server", "200.pid")
+	if err := os.WriteFile(pidPath, []byte("12345\n"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	// Sanity: opening must fail with EACCES.
+	if _, err := os.Open(pidPath); err == nil {
+		t.Fatalf("expected EACCES on mode 0000 file, got nil")
+	}
+
+	state, detail := Prober{RunDir: run}.QEMUState(200)
+	if state != events.StateRunning {
+		t.Errorf("state = %s (%q), want running", state, detail)
+	}
+	if detail != "" {
+		t.Errorf("detail = %q, want empty for happy path", detail)
+	}
+}
+
+// TestQEMUStateEmptyPIDFile covers the "PVE crashed mid-startup" case: the
+// PID file exists but is empty/garbage, so the VM is effectively stopped.
+func TestQEMUStateEmptyPIDFile(t *testing.T) {
+	run := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(run, "qemu-server"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, content := range []string{"", "  \n", "not-a-pid", "abc\n"} {
+		pidPath := filepath.Join(run, "qemu-server", "300.pid")
+		if err := os.WriteFile(pidPath, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		state, detail := Prober{RunDir: run}.QEMUState(300)
+		if state != events.StateStopped {
+			t.Errorf("content %q: state = %s (%q), want stopped", content, state, detail)
+		}
+	}
+}
+
+// TestQEMUStateMissingPIDFile covers the normal stopped case.
+func TestQEMUStateMissingPIDFile(t *testing.T) {
+	run := t.TempDir()
+	state, detail := Prober{RunDir: run}.QEMUState(404)
+	if state != events.StateStopped {
+		t.Errorf("state = %s (%q), want stopped", state, detail)
 	}
 }
 

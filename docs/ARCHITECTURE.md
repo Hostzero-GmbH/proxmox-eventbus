@@ -66,6 +66,30 @@ have helped either. If you need replay or at-least-once delivery for
 auditing, enable JetStream in a future release; it's a server option and
 won't change the wire format.
 
+## VM state detection
+
+The snapshot emitter resolves "is VM <vmid> running" without touching the
+Proxmox HTTP API or QMP:
+
+- **QEMU**: stat `/run/qemu-server/<vmid>.pid`. PVE removes the file on a
+  clean stop, so existence is authoritative for the running state. If we
+  have `CAP_DAC_READ_SEARCH` (granted by the bundled unit) we additionally
+  read the PID and run a `kill(pid, 0)` liveness check to catch stale files
+  left behind by a crash. `EPERM` from `kill` counts as alive - we don't
+  need `CAP_KILL`, only existence semantics.
+- **LXC**: read `cgroup.procs` from any of `lxc/<vmid>`, `lxc.payload-<vmid>`
+  or `lxc.payload.<vmid>` under `/sys/fs/cgroup`. The first layout that
+  exists wins.
+
+The `/proc/<pid>` stat path is deliberately avoided: `ProtectProc=invisible`
+in the unit hides other users' procs and would make us misreport every
+running QEMU as stopped. `kill(pid, 0)` is unaffected by that hardening.
+
+When we can't make a determination (rare - I/O error on stat, malformed
+`.vmlist` row, etc.) the state field is `unknown` and `state_detail`
+carries the cause so consumers and `proxmox-eventbus tail --data` can
+surface it directly.
+
 ## Advertise addresses
 
 Both listeners default to `0.0.0.0` so the daemon is reachable from any

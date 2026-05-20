@@ -89,6 +89,21 @@ In-scope:
 - Privilege escalation via the daemon process (mitigated by systemd
   sandboxing - see [packaging/systemd/proxmox-eventbus.service](../packaging/systemd/proxmox-eventbus.service)).
 
+## Linux capabilities
+
+The daemon drops all capabilities except `CAP_DAC_READ_SEARCH`, which it needs
+to read `/run/qemu-server/<vmid>.pid` (PVE writes those mode 0600 root:root).
+The cap is read-only - the daemon cannot write to root-owned files, connect
+to root-owned sockets, or override execute checks. Blast radius if the daemon
+is compromised: information disclosure of root-readable files. There is no
+write side and no signal/ptrace capability.
+
+QMP introspection (`snapshot.qmp: true`) is intentionally **not** supported in
+this configuration: connecting to `/run/qemu-server/<vmid>.qmp` (mode 0750
+root:root) requires write access on the socket and therefore `CAP_DAC_OVERRIDE`.
+Enable QMP only if you accept that broader capability and add it to the unit
+manually.
+
 Out of scope:
 
 - A compromised PVE node. With root access on any node the attacker already

@@ -68,12 +68,14 @@ func (e *Emitter) emitBatch() {
 	count := 0
 
 	for _, vmid := range qemu {
-		ev := e.snapshotEvent(events.KindQEMU, vmid, e.Probe.QEMUState(vmid), id)
+		state, detail := e.Probe.QEMUState(vmid)
+		ev := e.snapshotEvent(events.KindQEMU, vmid, state, detail, id)
 		e.send(ev)
 		count++
 	}
 	for _, vmid := range lxc {
-		ev := e.snapshotEvent(events.KindLXC, vmid, e.Probe.LXCState(vmid), id)
+		state, detail := e.Probe.LXCState(vmid)
+		ev := e.snapshotEvent(events.KindLXC, vmid, state, detail, id)
 		e.send(ev)
 		count++
 	}
@@ -93,7 +95,7 @@ func (e *Emitter) emitBatch() {
 	e.send(complete)
 }
 
-func (e *Emitter) snapshotEvent(kind events.Kind, vmid int, state events.State, snapshotID string) events.CloudEvent {
+func (e *Emitter) snapshotEvent(kind events.Kind, vmid int, state events.State, detail, snapshotID string) events.CloudEvent {
 	data := events.EventData{
 		Cluster:      e.Cluster,
 		Node:         e.Node,
@@ -102,6 +104,7 @@ func (e *Emitter) snapshotEvent(kind events.Kind, vmid int, state events.State, 
 		Action:       events.ActionState,
 		Phase:        events.PhaseSnapshot,
 		State:        state,
+		StateDetail:  detail,
 		SnapshotID:   snapshotID,
 		ObservedAtNS: time.Now().UnixNano(),
 	}

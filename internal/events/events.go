@@ -107,6 +107,7 @@ type EventData struct {
 
 	// Snapshot-only
 	State         State  `json:"state,omitempty"`
+	StateDetail   string `json:"state_detail,omitempty"` // populated when state=unknown to surface the cause
 	SnapshotID    string `json:"snapshot_id,omitempty"`
 	ObservedAtNS  int64  `json:"observed_at_ns,omitempty"`
 

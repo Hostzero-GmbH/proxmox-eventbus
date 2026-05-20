@@ -38,8 +38,13 @@ MemoryDenyWriteExecute=true
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @resources
-CapabilityBoundingSet=
-AmbientCapabilities=
+# CAP_DAC_READ_SEARCH lets the daemon read root-only files (PVE writes
+# /run/qemu-server/<vmid>.pid mode 0600 root:root). With it we can do an
+# active kill(pid,0) liveness probe against the QEMU PID instead of trusting
+# file existence alone. Read-only: still can't write/connect to root-owned
+# files, so QMP sockets (mode 0750) remain out of reach.
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH
+AmbientCapabilities=CAP_DAC_READ_SEARCH
 
 # /proc is needed read-only so the migrate-target argv read works.
 # pmxcfs (/etc/pve) is read-only for us; we only write logs to journald.

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -31,6 +32,7 @@ func runTail(args []string) int {
 	cn := fs.String("cn", "proxmox-eventbus/tail", "CN for the ephemeral client cert")
 	validity := fs.Duration("validity", time.Hour, "ephemeral client cert lifetime")
 	jsonMode := fs.Bool("json", false, "emit raw CloudEvent JSON (one per line); default is human-readable summary")
+	withData := fs.Bool("data", false, "append the compact `data` JSON to each summary line")
 	skipServerVerify := fs.Bool("insecure-skip-verify", true, "skip TLS hostname check on the server cert; on by default since pve-ssl.pem may not list 127.0.0.1")
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: proxmox-eventbus tail [flags] <subject> [<subject>...]")
@@ -67,6 +69,8 @@ func runTail(args []string) int {
 		return 1
 	}
 
+	handler := makeHandler(*jsonMode, *withData)
+
 	nc, err := nats.Connect(*server,
 		nats.Secure(tlsCfg),
 		nats.Name("proxmox-eventbus/tail"),
@@ -83,7 +87,7 @@ func runTail(args []string) int {
 	defer nc.Close()
 
 	for _, subj := range subjects {
-		_, err := nc.Subscribe(subj, makeHandler(*jsonMode))
+		_, err := nc.Subscribe(subj, handler)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "subscribe", subj, ":", err)
 			return 1
@@ -129,7 +133,7 @@ func buildTailTLS(cfg config.Config, cn string, validity time.Duration, skipVeri
 	}, nil
 }
 
-func makeHandler(jsonMode bool) nats.MsgHandler {
+func makeHandler(jsonMode, withData bool) nats.MsgHandler {
 	if jsonMode {
 		return func(m *nats.Msg) {
 			_, _ = os.Stdout.Write(m.Data)
@@ -137,60 +141,104 @@ func makeHandler(jsonMode bool) nats.MsgHandler {
 		}
 	}
 	return func(m *nats.Msg) {
-		printSummary(m)
+		printSummary(m, withData)
 	}
 }
 
 // printSummary renders one human-readable line per event:
 //
-//	HH:MM:SS  <subject>  action=<a> phase=<p> [migrate-target=<n>] [duration=<ms>]
+//	HH:MM:SS  <subject>  vm=<id>(<name>)  <action>/<phase>|state=<s>  [-> <node>]  [took=<ms>]
 //
-// The full JSON is appended in dimmed grey at the end so jq-style pipelines
-// still work.
-func printSummary(m *nats.Msg) {
+// Periodic state-report events (action=state, phase=snapshot) and
+// snapshot.complete batch markers get a special compact rendering so that the
+// useful field (state, count) shows up instead of "state/snapshot".
+//
+// When withData is true, the compact JSON of the full CloudEvent `data`
+// payload is appended to each line for forensic inspection.
+func printSummary(m *nats.Msg, withData bool) {
 	var ev struct {
-		Time time.Time `json:"time"`
-		Data struct {
-			Action     string `json:"action"`
-			Phase      string `json:"phase"`
-			State      string `json:"state"`
-			VMID       int    `json:"vmid"`
-			Name       string `json:"name"`
-			TargetNode string `json:"target_node"`
-			DurationMS *int64 `json:"duration_ms"`
-			ExitStatus string `json:"exit_status"`
-		} `json:"data"`
+		Type string          `json:"type"`
+		Time time.Time       `json:"time"`
+		Data json.RawMessage `json:"data"`
 	}
 	if err := json.Unmarshal(m.Data, &ev); err != nil {
 		_, _ = fmt.Fprintf(os.Stdout, "%s  %s  (unparsed) %s\n",
 			time.Now().Format("15:04:05"), m.Subject, m.Data)
 		return
 	}
+	var d struct {
+		Action        string   `json:"action"`
+		Phase         string   `json:"phase"`
+		State         string   `json:"state"`
+		StateDetail   string   `json:"state_detail"`
+		VMID          int      `json:"vmid"`
+		Name          string   `json:"name"`
+		Tags          []string `json:"tags"`
+		SourceNode    string   `json:"source_node"`
+		TargetNode    string   `json:"target_node"`
+		DurationMS    *int64   `json:"duration_ms"`
+		ExitStatus    string   `json:"exit_status"`
+		SnapshotCount int      `json:"count"`
+	}
+	_ = json.Unmarshal(ev.Data, &d)
 
 	var b strings.Builder
 	b.WriteString(ev.Time.Local().Format("15:04:05"))
 	b.WriteString("  ")
 	b.WriteString(m.Subject)
-	if ev.Data.VMID != 0 {
-		fmt.Fprintf(&b, "  vm=%d", ev.Data.VMID)
-		if ev.Data.Name != "" {
-			fmt.Fprintf(&b, "(%s)", ev.Data.Name)
+
+	switch {
+	case strings.HasSuffix(ev.Type, ".snapshot.complete"):
+		fmt.Fprintf(&b, "  batch=%d", d.SnapshotCount)
+	case d.Action == "state" && d.Phase == "snapshot":
+		fmt.Fprintf(&b, "  vm=%d", d.VMID)
+		if d.Name != "" {
+			fmt.Fprintf(&b, "(%s)", d.Name)
+		}
+		if d.State != "" {
+			fmt.Fprintf(&b, "  state=%s", d.State)
+		}
+		if d.StateDetail != "" {
+			fmt.Fprintf(&b, " (%s)", d.StateDetail)
+		}
+		if len(d.Tags) > 0 {
+			fmt.Fprintf(&b, "  tags=%s", strings.Join(d.Tags, ","))
+		}
+	default:
+		if d.VMID != 0 {
+			fmt.Fprintf(&b, "  vm=%d", d.VMID)
+			if d.Name != "" {
+				fmt.Fprintf(&b, "(%s)", d.Name)
+			}
+		}
+		if d.Action != "" {
+			fmt.Fprintf(&b, "  %s/%s", d.Action, d.Phase)
+		}
+		if d.SourceNode != "" && d.SourceNode != d.TargetNode {
+			fmt.Fprintf(&b, "  %s->%s", d.SourceNode, d.TargetNode)
+		} else if d.TargetNode != "" {
+			fmt.Fprintf(&b, "  ->%s", d.TargetNode)
+		}
+		if d.DurationMS != nil {
+			fmt.Fprintf(&b, "  took=%dms", *d.DurationMS)
+		}
+		if d.ExitStatus != "" && d.ExitStatus != "OK" {
+			fmt.Fprintf(&b, "  exit=%q", d.ExitStatus)
+		}
+		if len(d.Tags) > 0 {
+			fmt.Fprintf(&b, "  tags=%s", strings.Join(d.Tags, ","))
 		}
 	}
-	if ev.Data.Action != "" {
-		fmt.Fprintf(&b, "  %s/%s", ev.Data.Action, ev.Data.Phase)
-	} else if ev.Data.State != "" {
-		fmt.Fprintf(&b, "  state=%s", ev.Data.State)
+
+	if withData && len(ev.Data) > 0 {
+		// Re-encode through a compact buffer to drop indentation/whitespace.
+		var compact bytes.Buffer
+		if err := json.Compact(&compact, ev.Data); err == nil {
+			b.WriteString("  data=")
+			b.Write(compact.Bytes())
+		}
 	}
-	if ev.Data.TargetNode != "" {
-		fmt.Fprintf(&b, "  -> %s", ev.Data.TargetNode)
-	}
-	if ev.Data.DurationMS != nil {
-		fmt.Fprintf(&b, "  took=%dms", *ev.Data.DurationMS)
-	}
-	if ev.Data.ExitStatus != "" && ev.Data.ExitStatus != "OK" {
-		fmt.Fprintf(&b, "  exit=%q", ev.Data.ExitStatus)
-	}
+
 	b.WriteByte('\n')
 	_, _ = os.Stdout.WriteString(b.String())
 }
