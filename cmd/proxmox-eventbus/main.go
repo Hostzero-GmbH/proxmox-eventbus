@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -77,10 +78,7 @@ func runDaemon() error {
 
 	reader := pmxcfs.New(cfg.Node.PmxcfsRoot)
 
-	clusterName := cfg.Node.ClusterName
-	if clusterName == "" {
-		clusterName = reader.ClusterName()
-	}
+	clusterName := nonEmpty(strings.TrimSpace(cfg.Node.ClusterName), detectClusterName(reader, log))
 	if clusterName == "" {
 		clusterName = "standalone"
 	}
@@ -233,6 +231,33 @@ func nonEmpty(a, b string) string {
 		return a
 	}
 	return b
+}
+
+// detectClusterName reads /etc/pve/.members and returns the cluster name.
+// It retries briefly to avoid transient startup races with pmxcfs mount timing.
+func detectClusterName(reader *pmxcfs.Reader, log *slog.Logger) string {
+	const (
+		maxAttempts = 20
+		retryDelay  = 250 * time.Millisecond
+	)
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		members, err := reader.Members()
+		if err == nil {
+			name := strings.TrimSpace(members.Cluster.Name)
+			if name != "" {
+				return name
+			}
+			log.Info("cluster name missing in .members; treating host as standalone", "pmxcfs_root", reader.Root())
+			return ""
+		}
+		if attempt == maxAttempts {
+			log.Warn("cluster name auto-detect failed; treating host as standalone",
+				"pmxcfs_root", reader.Root(), "attempts", maxAttempts, "err", err)
+			return ""
+		}
+		time.Sleep(retryDelay)
+	}
+	return ""
 }
 
 // resolveAdvertise returns effective ClientAdvertise/ClusterAdvertise strings.
