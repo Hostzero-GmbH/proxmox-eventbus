@@ -135,6 +135,7 @@ func runDaemon() error {
 		Cluster: clusterName,
 		Node:    nodeName,
 		Reader:  reader,
+		TasksRoot: cfg.Watch.TasksDir,
 	}
 
 	out := make(chan events.CloudEvent, 1024)
