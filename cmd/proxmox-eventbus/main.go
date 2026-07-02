@@ -132,9 +132,9 @@ func runDaemon() error {
 	notifyReady()
 
 	enricher := &enrich.Enricher{
-		Cluster: clusterName,
-		Node:    nodeName,
-		Reader:  reader,
+		Cluster:   clusterName,
+		Node:      nodeName,
+		Reader:    reader,
 		TasksRoot: cfg.Watch.TasksDir,
 	}
 
@@ -209,7 +209,10 @@ func runWatcher(ctx context.Context, cfg config.Config, log *slog.Logger, enrich
 			start := starts[ev.UPID.Raw]
 			ce := enricher.Lifecycle(ev, start)
 			out <- ce
-			if ev.Phase != tasks.PhaseStarted {
+			// PhaseSynced is a non-terminal, mid-task observation for
+			// migrations; only clear the cached start time once the task
+			// has actually finished or failed.
+			if ev.Phase == tasks.PhaseFinished || ev.Phase == tasks.PhaseFailed {
 				delete(starts, ev.UPID.Raw)
 			}
 		}

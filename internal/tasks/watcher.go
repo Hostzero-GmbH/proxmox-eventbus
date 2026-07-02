@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fsnotify/fsnotify"
 	"github.com/Hostzero-GmbH/proxmox-eventbus/internal/events"
+	"github.com/fsnotify/fsnotify"
 )
 
 // Phase reports whether the task just started or has terminated.
@@ -24,6 +24,10 @@ const (
 	PhaseStarted  Phase = "started"
 	PhaseFinished Phase = "finished"
 	PhaseFailed   Phase = "failed"
+	// PhaseSynced is a non-terminal phase emitted once for migrate tasks,
+	// the moment the per-task log shows migrationSyncedMarker. See
+	// watchMigrationSynced for details.
+	PhaseSynced Phase = "synced"
 )
 
 // Event is the raw observation produced by the watcher; it is the input to internal/enrich.
@@ -49,6 +53,9 @@ type Watcher struct {
 	mu       sync.Mutex
 	known    map[string]upidState // keyed by raw UPID
 	debounce time.Duration
+	// syncPollInterval controls how often watchMigrationSynced re-reads a
+	// migrate task's log file looking for migrationSyncedMarker.
+	syncPollInterval time.Duration
 
 	out chan Event
 }
@@ -56,6 +63,7 @@ type Watcher struct {
 type upidState struct {
 	startedEmitted  bool
 	finishedEmitted bool
+	syncedEmitted   bool
 }
 
 // NewWatcher creates a Watcher rooted at tasksDir (typically /var/log/pve/tasks).
@@ -71,11 +79,12 @@ func NewWatcher(tasksDir string, include []events.Kind) *Watcher {
 		}
 	}
 	return &Watcher{
-		tasksDir: tasksDir,
-		include:  set,
-		known:    map[string]upidState{},
-		debounce: 25 * time.Millisecond,
-		out:      make(chan Event, 256),
+		tasksDir:         tasksDir,
+		include:          set,
+		known:            map[string]upidState{},
+		debounce:         25 * time.Millisecond,
+		syncPollInterval: 250 * time.Millisecond,
+		out:              make(chan Event, 256),
 	}
 }
 
@@ -100,7 +109,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 		}
 	}
 
-	if err := w.scan(activePath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	if err := w.scan(ctx, activePath); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("initial scan: %w", err)
 	}
 
@@ -135,7 +144,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 			}
 		case <-debounce.C:
 			pending = false
-			if err := w.scan(activePath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			if err := w.scan(ctx, activePath); err != nil && !errors.Is(err, fs.ErrNotExist) {
 				return fmt.Errorf("scan: %w", err)
 			}
 		}
@@ -146,16 +155,16 @@ func relevantPath(p, activePath string) bool {
 	return p == activePath || strings.HasSuffix(p, "/active")
 }
 
-func (w *Watcher) scan(activePath string) error {
+func (w *Watcher) scan(ctx context.Context, activePath string) error {
 	f, err := os.Open(activePath)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	return w.parseAll(f, time.Now())
+	return w.parseAll(ctx, f, time.Now())
 }
 
-func (w *Watcher) parseAll(r io.Reader, obs time.Time) error {
+func (w *Watcher) parseAll(ctx context.Context, r io.Reader, obs time.Time) error {
 	seen := map[string]bool{}
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 16*1024), 512*1024)
@@ -191,6 +200,9 @@ func (w *Watcher) parseAll(r io.Reader, obs time.Time) error {
 
 		if emitStart {
 			w.out <- Event{UPID: upid, Kind: kind, Action: action, Phase: PhaseStarted, ObsTime: obs}
+			if kind == events.KindQEMU && action == events.ActionMigrate {
+				go w.watchMigrationSynced(ctx, upid)
+			}
 		}
 		if emitEnd {
 			phase := PhaseFinished
@@ -220,4 +232,71 @@ func (w *Watcher) parseAll(r io.Reader, obs time.Time) error {
 
 func isOK(status string) bool {
 	return status == "OK" || strings.HasPrefix(status, "OK")
+}
+
+// migrationSyncedMarker is the line PVE appends to a live migration's task
+// log once the target-side data (RAM state for online migrations) has fully
+// caught up. It shows up roughly when "all 'mirror' jobs are ready" and the
+// live migrate command hand off; PVE still has several seconds of cleanup
+// (stopping the NBD server, flushing conntrack, removing the source volume)
+// before the task's terminal status appears in the active file, so waiting
+// for phase=finished/failed alone reports the event much later than useful.
+const migrationSyncedMarker = "migration status: completed"
+
+// watchMigrationSynced polls upid's per-task log file for migrationSyncedMarker
+// and emits a single PhaseSynced event the first time it appears. It exits
+// once the marker is found, the task's terminal event has already been
+// emitted, or ctx is cancelled - whichever happens first.
+func (w *Watcher) watchMigrationSynced(ctx context.Context, upid UPID) {
+	ticker := time.NewTicker(w.syncPollInterval)
+	defer ticker.Stop()
+
+	var logFile string
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
+		w.mu.Lock()
+		st, ok := w.known[upid.Raw]
+		w.mu.Unlock()
+		if !ok || st.finishedEmitted {
+			return
+		}
+
+		if logFile == "" {
+			f, err := FindLogFile(w.tasksDir, upid.Raw)
+			if err != nil || f == "" {
+				continue
+			}
+			logFile = f
+		}
+
+		b, err := os.ReadFile(logFile)
+		if err != nil {
+			continue
+		}
+		if !strings.Contains(string(b), migrationSyncedMarker) {
+			continue
+		}
+
+		w.mu.Lock()
+		st = w.known[upid.Raw]
+		already := st.syncedEmitted
+		st.syncedEmitted = true
+		w.known[upid.Raw] = st
+		w.mu.Unlock()
+		if already {
+			return
+		}
+
+		kind, action, ok := WorkerTypeMap(upid.Type)
+		if !ok {
+			return
+		}
+		w.out <- Event{UPID: upid, Kind: kind, Action: action, Phase: PhaseSynced, ObsTime: time.Now()}
+		return
+	}
 }

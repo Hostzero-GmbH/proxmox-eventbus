@@ -5,9 +5,7 @@ package enrich
 
 import (
 	"errors"
-	"io/fs"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -158,7 +156,7 @@ func (e *Enricher) migrateTarget(upid tasks.UPID) string {
 }
 
 func (e *Enricher) migrateTargetFromTaskLog(upid tasks.UPID) string {
-	logFile, err := findTaskLogFile(e.tasksRoot(), upid.Raw)
+	logFile, err := tasks.FindLogFile(e.tasksRoot(), upid.Raw)
 	if err != nil || logFile == "" {
 		return ""
 	}
@@ -180,65 +178,6 @@ func parseMigrateTargetFromLog(s string) string {
 		return ""
 	}
 	return m[1]
-}
-
-func findTaskLogFile(root, upidRaw string) (string, error) {
-	if root == "" || upidRaw == "" {
-		return "", nil
-	}
-	name := strings.TrimSpace(upidRaw)
-	if name == "" {
-		return "", nil
-	}
-	trimmed := strings.TrimSuffix(name, ":")
-
-	candidates := []string{
-		filepath.Join(root, name),
-		filepath.Join(root, trimmed),
-	}
-	for _, c := range candidates {
-		if _, err := os.Stat(c); err == nil {
-			return c, nil
-		}
-	}
-
-	for _, n := range []string{name, trimmed} {
-		matches, _ := filepath.Glob(filepath.Join(root, "*", n))
-		for _, m := range matches {
-			if fi, err := os.Stat(m); err == nil && !fi.IsDir() {
-				return m, nil
-			}
-		}
-	}
-
-	const maxDepth = 3
-	var found string
-	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		rel, rerr := filepath.Rel(root, path)
-		if rerr != nil {
-			return nil
-		}
-		if rel == "." {
-			return nil
-		}
-		depth := strings.Count(rel, string(filepath.Separator))
-		if d.IsDir() {
-			if depth >= maxDepth {
-				return fs.SkipDir
-			}
-			return nil
-		}
-		base := d.Name()
-		if base == name || base == trimmed {
-			found = path
-			return fs.SkipAll
-		}
-		return nil
-	})
-	return found, nil
 }
 
 func parseMigrateTarget(args []string) string {

@@ -35,6 +35,12 @@ const (
 	PhaseFinished Phase = "finished"
 	PhaseFailed   Phase = "failed"
 	PhaseSnapshot Phase = "snapshot"
+	// PhaseSynced fires mid-migration once the target-side data (live RAM
+	// state or offline storage copy) has fully synced but before PVE has
+	// finished tearing down the migration helpers (NBD server, conntrack
+	// flush, source volume removal). It only applies to action=migrate and
+	// always precedes phase=finished/failed for that same task.
+	PhaseSynced Phase = "synced"
 )
 
 type Action string
@@ -82,9 +88,9 @@ type CloudEvent struct {
 // One struct covers lifecycle, snapshot and snapshot-complete events; unused
 // fields are omitted via `omitempty`.
 type EventData struct {
-	SchemaVersion string   `json:"schemaVersion"`
-	Cluster       string   `json:"cluster"`
-	Node          string   `json:"node"`
+	SchemaVersion string `json:"schemaVersion"`
+	Cluster       string `json:"cluster"`
+	Node          string `json:"node"`
 
 	// Lifecycle + snapshot fields
 	Kind        Kind     `json:"kind,omitempty"`
@@ -98,18 +104,18 @@ type EventData struct {
 	Phase  Phase  `json:"phase,omitempty"`
 
 	// Lifecycle-only
-	UPID        string `json:"upid,omitempty"`
-	User        string `json:"user,omitempty"`
-	SourceNode  string `json:"source_node,omitempty"`
-	TargetNode  string `json:"target_node,omitempty"`
-	DurationMS  *int64 `json:"duration_ms,omitempty"`
-	ExitStatus  string `json:"exit_status,omitempty"`
+	UPID       string `json:"upid,omitempty"`
+	User       string `json:"user,omitempty"`
+	SourceNode string `json:"source_node,omitempty"`
+	TargetNode string `json:"target_node,omitempty"`
+	DurationMS *int64 `json:"duration_ms,omitempty"`
+	ExitStatus string `json:"exit_status,omitempty"`
 
 	// Snapshot-only
-	State         State  `json:"state,omitempty"`
-	StateDetail   string `json:"state_detail,omitempty"` // populated when state=unknown to surface the cause
-	SnapshotID    string `json:"snapshot_id,omitempty"`
-	ObservedAtNS  int64  `json:"observed_at_ns,omitempty"`
+	State        State  `json:"state,omitempty"`
+	StateDetail  string `json:"state_detail,omitempty"` // populated when state=unknown to surface the cause
+	SnapshotID   string `json:"snapshot_id,omitempty"`
+	ObservedAtNS int64  `json:"observed_at_ns,omitempty"`
 
 	// snapshot.complete-only
 	SnapshotCount int `json:"count,omitempty"`

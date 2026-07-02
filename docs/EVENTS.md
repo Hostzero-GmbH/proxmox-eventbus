@@ -34,7 +34,7 @@ shape; everything proxmox-eventbus specific lives in the `data` field.
   "hookscript": "local:snippets/migrate.sh",
 
   "action": "start|stop|shutdown|reboot|reset|suspend|resume|migrate|clone|create|destroy|template|state",
-  "phase":  "started|finished|failed|snapshot",
+  "phase":  "started|synced|finished|failed|snapshot",
 
   // lifecycle-only
   "upid": "UPID:pve1:00001234:0ABCDEF0:6645A1B2:qmigrate:101:root@pam:",
@@ -70,7 +70,8 @@ dev.proxmox.eventbus.<kind>.<action>.<phase>
 
 Each lifecycle action emits two events: `phase=started` when the UPID first
 appears in `/var/log/pve/tasks/active`, and `phase=finished` / `phase=failed`
-when the matching entry shows a result.
+when the matching entry shows a result. QEMU migrations emit one extra,
+non-terminal `phase=synced` event in between - see "Migration extras" below.
 
 ### Action -> PVE worker types
 
@@ -95,6 +96,17 @@ For `action=migrate, phase=started`, `target_node` is populated from
 `/proc/<pid>/cmdline` of the spawning `qm migrate` / `pct migrate` process.
 For HA-driven migrations where the PID is `pve-ha-lrm`, the field may be
 empty on `started`; the `finished` event always has a `duration_ms`.
+
+QEMU live migrations additionally emit `action=migrate, phase=synced` - a
+non-terminal event fired the moment the per-task log shows `migration
+status: completed`. That line marks memory-state handover to the target;
+PVE still spends a few more seconds tearing down the NBD mirror, flushing
+conntrack state and removing the source volume before the task's terminal
+status (and the `finished` event) appears. Consumers that want to react to
+the VM actually running on the target as early as possible should use
+`phase=synced` instead of waiting for `phase=finished`. It always precedes
+`finished`/`failed` for the same UPID and is only emitted once. LXC
+migrations (restart-based, no live memory transfer) never emit it.
 
 ## Snapshot events (general interrogation)
 
